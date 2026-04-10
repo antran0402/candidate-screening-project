@@ -1,4 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { db } from './firebase';
+import { 
+  collection, onSnapshot, addDoc, updateDoc, 
+  deleteDoc, doc, query, orderBy 
+} from 'firebase/firestore';
+
 import { 
   Container, Paper, Typography, TextField, IconButton, 
   List, ListItem, ListItemText, ListItemIcon, Box, 
@@ -16,18 +22,28 @@ import {
 } from '@mui/icons-material';
 
 function App() {
-  const [items, setItems] = useState([
-    { id: 1, itemName: 'Áo thun', quantity: 1, isSelected: false },
-    { id: 2, itemName: 'Đồ thể thao', quantity: 3, isSelected: true },
-    { id: 3, itemName: 'Quần tây', quantity: 1, isSelected: false },
-  ]);
+  const [items, setItems] = useState([]);
   const [inputValue, setInputValue] = useState('');
-  const [errorMsg, setErrorMsg] = useState(''); 
+  const [errorMsg, setErrorMsg] = useState('');
 
-  const handleAddButtonClick = () => {
+  // 1. Lắng nghe dữ liệu thời gian thực từ Firestore
+  useEffect(() => {
+    const q = query(collection(db, "todos"), orderBy("createdAt", "desc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id
+      }));
+      setItems(data);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 2. Thêm món đồ mới
+  const handleAddButtonClick = async () => {
     const trimmedValue = inputValue.trim();
 
-    if (trimmedValue === '') {
+    if (!trimmedValue) {
       setErrorMsg('Vui lòng nhập tên món đồ!');
       return;
     }
@@ -41,36 +57,38 @@ function App() {
       return;
     }
 
-    const newItem = {
-      id: Date.now(),
-      itemName: trimmedValue,
-      quantity: 1,
-      isSelected: false,
-    };
-
-    setItems([...items, newItem]);
-    setInputValue('');
-    setErrorMsg(''); 
-  };
-
-  const handleQuantityUpdate = (index, delta) => {
-    const newItems = [...items];
-    const newQty = newItems[index].quantity + delta;
-    if (newQty >= 0) {
-      newItems[index].quantity = newQty;
-      setItems(newItems);
+    try {
+      await addDoc(collection(db, "todos"), {
+        itemName: trimmedValue,
+        quantity: 1,
+        isSelected: false,
+        createdAt: new Date()
+      });
+      setInputValue('');
+      setErrorMsg('');
+    } catch (e) {
+      console.error("Lỗi khi thêm: ", e);
     }
   };
 
-  const toggleComplete = (index) => {
-    const newItems = [...items];
-    newItems[index].isSelected = !newItems[index].isSelected;
-    setItems(newItems);
+  // 3. Cập nhật số lượng
+  const handleQuantityUpdate = async (id, currentQty, delta) => {
+    const newQty = currentQty + delta;
+    if (newQty >= 0) {
+      const itemRef = doc(db, "todos", id);
+      await updateDoc(itemRef, { quantity: newQty });
+    }
   };
 
-  const handleDeleteItem = (id) => {
-    const newItems = items.filter((item) => item.id !== id);
-    setItems(newItems);
+  // 4. Đánh dấu hoàn thành
+  const toggleComplete = async (id, currentStatus) => {
+    const itemRef = doc(db, "todos", id);
+    await updateDoc(itemRef, { isSelected: !currentStatus });
+  };
+
+  // 5. Xóa món đồ
+  const handleDeleteItem = async (id) => {
+    await deleteDoc(doc(db, "todos", id));
   };
 
   const totalItemCount = items.reduce(
@@ -86,7 +104,7 @@ function App() {
       py: 5 
     }}>
       <Container maxWidth="xs">
-        <Paper elevation={10} sx={{ p: 4, borderRadius: 5, bgcolor: 'rgba(255, 255, 255, 0.9)', backdropFilter: 'blur(10px)' }}>
+        <Paper elevation={10} sx={{ p: 4, borderRadius: 5, bgcolor: 'rgba(255, 255, 255, 0.85)', backdropFilter: 'blur(10px)' }}>
           
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 2, gap: 1 }}>
             <BasketIcon color="primary" fontSize="large" />
@@ -95,7 +113,6 @@ function App() {
             </Typography>
           </Box>
 
-          {/* Ô nhập liệu */}
           <Box sx={{ mb: 4 }}>
             <TextField
               fullWidth
@@ -106,7 +123,7 @@ function App() {
               helperText={errorMsg}
               onChange={(e) => {
                 setInputValue(e.target.value);
-                if (errorMsg) setErrorMsg(''); // Xóa lỗi khi người dùng bắt đầu gõ lại
+                if (errorMsg) setErrorMsg('');
               }}
               onKeyDown={(e) => e.key === 'Enter' && handleAddButtonClick()}
               InputProps={{
@@ -122,26 +139,21 @@ function App() {
             />
           </Box>
 
-          {/* Danh sách hiển thị */}
           <List sx={{ width: '100%', maxHeight: 350, overflow: 'auto', pr: 1 }}>
-            {items.map((item, index) => (
+            {items.map((item) => (
               <Fade in={true} key={item.id}>
                 <ListItem
                   divider
-                  sx={{ 
-                    px: 1,
-                    transition: '0.3s',
-                    '&:hover': { bgcolor: 'rgba(0,0,0,0.02)' }
-                  }}
+                  sx={{ px: 1, '&:hover': { bgcolor: 'rgba(0,0,0,0.02)' } }}
                   secondaryAction={
                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                      <IconButton size="small" onClick={() => handleQuantityUpdate(index, -1)}>
+                      <IconButton size="small" onClick={() => handleQuantityUpdate(item.id, item.quantity, -1)}>
                         <ChevronLeftIcon fontSize="small" />
                       </IconButton>
                       <Typography sx={{ mx: 0.5, fontWeight: 'bold', minWidth: 20, textAlign: 'center' }}>
                         {item.quantity}
                       </Typography>
-                      <IconButton size="small" onClick={() => handleQuantityUpdate(index, 1)}>
+                      <IconButton size="small" onClick={() => handleQuantityUpdate(item.id, item.quantity, 1)}>
                         <ChevronRightIcon fontSize="small" />
                       </IconButton>
                       <Tooltip title="Xóa">
@@ -152,12 +164,12 @@ function App() {
                     </Box>
                   }
                 >
-                  <ListItemIcon sx={{ cursor: 'pointer', minWidth: 40 }} onClick={() => toggleComplete(index)}>
+                  <ListItemIcon sx={{ cursor: 'pointer', minWidth: 40 }} onClick={() => toggleComplete(item.id, item.isSelected)}>
                     {item.isSelected ? <CheckCircleIcon color="success" /> : <CircleIcon color="action" />}
                   </ListItemIcon>
                   <ListItemText
                     primary={item.itemName}
-                    onClick={() => toggleComplete(index)}
+                    onClick={() => toggleComplete(item.id, item.isSelected)}
                     sx={{ 
                       cursor: 'pointer',
                       textDecoration: item.isSelected ? 'line-through' : 'none',
@@ -169,19 +181,12 @@ function App() {
             ))}
           </List>
 
-          {/* Footer: Tổng cộng */}
           <Box sx={{ 
-            mt: 4, 
-            p: 2, 
-            borderRadius: 4, 
-            bgcolor: '#1976d2', 
-            boxShadow: '0 4px 20px rgba(25, 118, 210, 0.4)',
-            color: 'white',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center'
+            mt: 4, p: 2, borderRadius: 4, bgcolor: '#1976d2', 
+            boxShadow: '0 4px 20px rgba(25, 118, 210, 0.4)', color: 'white',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center'
           }}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Tổng số lượng:</Typography>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Tổng chưa mua:</Typography>
             <Typography variant="h5" sx={{ fontWeight: 900 }}>{totalItemCount}</Typography>
           </Box>
 
